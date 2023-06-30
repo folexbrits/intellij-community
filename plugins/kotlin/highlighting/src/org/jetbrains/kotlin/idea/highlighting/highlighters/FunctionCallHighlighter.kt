@@ -6,12 +6,14 @@ import com.intellij.codeInsight.daemon.impl.HighlightInfo
 import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.openapi.project.Project
 import org.jetbrains.kotlin.analysis.api.KtAnalysisSession
+import org.jetbrains.kotlin.analysis.api.analyze
 import org.jetbrains.kotlin.analysis.api.calls.*
 import org.jetbrains.kotlin.analysis.api.symbols.KtAnonymousFunctionSymbol
 import org.jetbrains.kotlin.analysis.api.symbols.KtConstructorSymbol
 import org.jetbrains.kotlin.analysis.api.symbols.KtFunctionSymbol
 import org.jetbrains.kotlin.analysis.api.symbols.markers.KtSymbolKind
 import org.jetbrains.kotlin.builtins.StandardNames
+import org.jetbrains.kotlin.idea.highlighting.KotlinCallHighlighterExtension
 import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.name.Name
@@ -48,16 +50,24 @@ internal class FunctionCallHighlighter(
 
     context(KtAnalysisSession)
     private fun highlightCallExpression(expression: KtCallExpression): List<HighlightInfo.Builder> {
-        return listOfNotNull(expression.calleeExpression
-            ?.takeUnless { it is KtLambdaExpression }
-            ?.takeUnless { it is KtCallExpression /* KT-16159 */ }
-            ?.let { callee ->
-                expression.resolveCall()?.singleCallOrNull<KtCall>()?.let { call ->
-                    getTextAttributesForCall(call)?.let { attributes ->
-                        highlightName(callee, attributes)
-                    }
+        val callee = expression.calleeExpression ?: return emptyList()
+        return listOfNotNull(
+            // If KotlinCallHighlighterExtension has an implementation registered in XML, use it.
+            KotlinCallHighlighterExtension.EP_NAME.extensionList.firstNotNullOfOrNull { extension ->
+                analyze(expression) {
+                    expression.resolveCall()?.singleCallOrNull<KtCall>()?.let { extension.highlightCall(expression, it) }
                 }
-            })
+            }?.let { attributes -> highlightName(callee, attributes) } ?:
+            // Otherwise, use the default one. See getTextAttributesForCall() below.
+            callee.takeUnless { it is KtLambdaExpression }
+                ?.takeUnless { it is KtCallExpression /* KT-16159 */ }
+                ?.let { callee ->
+                    expression.resolveCall()?.singleCallOrNull<KtCall>()?.let { call ->
+                        getTextAttributesForCall(call)?.let { attributes ->
+                            highlightName(callee, attributes)
+                        }
+                    }
+                })
     }
 
     context(KtAnalysisSession)
